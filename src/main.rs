@@ -66,10 +66,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    let retries = scan_circle(&mut controller)?;
-    println!("Circle scan retries: {}", retries);
+    let mut retries = scan_circle(&mut controller)?;
 
-    let mut retries = scan(&mut controller)?;
+    retries += controller.set_look(-60.0, -125.0)?;
+    retries += controller.set_look(60.0, 125.0)?;
+    retries += scan(&mut controller)?;
     retries += controller.set_look(0.0, -125.0)?;
     retries += controller.set_look(0.0, 125.0)?;
     retries += controller.set_look(0.0, 0.0)?;
