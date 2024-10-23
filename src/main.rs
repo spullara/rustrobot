@@ -68,25 +68,25 @@ impl Controller {
     /// Set the position of a servo
     /// If degrees=true, position should be between -125.0 and 125.0 degrees
     /// If degrees=false, position should be between 0 and 1000
-    fn set_position<T: Into<f32>>(&mut self, servo_id: Servo, position: T, degrees: bool, duration_ms: u16) -> Result<(), Box<dyn Error>> {
+    fn set_position<T: Into<f32>>(&mut self, servo_id: Servo, position: T) -> Result<(), Box<dyn Error>> {
+        let angular_speed = 250.0 / 200.0; // ms per degree
+        let position = position.into();
+        if !(-125.0..=125.0).contains(&position) {
+            return Err("Angle must be between -125.0 and 125.0 degrees".into());
+        }
+
+        // get current position
+        let current_angle = self.get_position(servo_id)?;
+        let duration_ms = ((position - current_angle).abs() * angular_speed).round() as u16;
+        println!("Moving servo {} from {} to {} ({}ms)", servo_id as u8, current_angle, position, duration_ms);
+
         let mut data = vec![
             1u8, // number of servos
             (duration_ms & 0xff) as u8,
             ((duration_ms & 0xff00) >> 8) as u8,
         ];
 
-        let position = position.into();
-        let pos = if degrees {
-            if !(-125.0..=125.0).contains(&position) {
-                return Err("Angle must be between -125.0 and 125.0 degrees".into());
-            }
-            Self::_angle_to_position(position)
-        } else {
-            if !(0.0..=1000.0).contains(&position) {
-                return Err("Position must be between 0 and 1000".into());
-            }
-            position as u16
-        };
+        let pos = Self::_angle_to_position(position);
 
         data.extend_from_slice(&[
             servo_id as u8,
@@ -104,18 +104,14 @@ impl Controller {
 
     /// Get the position of a servo
     /// Returns either raw position (0-1000) or angle (-125.0 to 125.0) if degrees=true
-    fn get_position(&mut self, servo_id: Servo, degrees: bool) -> Result<f32, Box<dyn Error>> {
+    fn get_position(&mut self, servo_id: Servo) -> Result<f32, Box<dyn Error>> {
         let data = [1u8, servo_id as u8];
         self._send(CMD_GET_SERVO_POSITION, &data)?;
 
         let response = self._recv(CMD_GET_SERVO_POSITION)?;
         if response.len() >= 4 {
             let position = (response[3] as u16) * 256 + response[2] as u16;
-            if degrees {
-                Ok(Self::_position_to_angle(position))
-            } else {
-                Ok(position as f32)
-            }
+            Ok(Self::_position_to_angle(position))
         } else {
             Err("Invalid position data received".into())
         }
@@ -165,7 +161,7 @@ impl Controller {
 
         JointAngles {
             shoulder: (shoulder * 10.0).round() / 10.0,  // Round to 1 decimal place
-            elbow: - (elbow * 10.0).round() / 10.0,
+            elbow: -(elbow * 10.0).round() / 10.0,
             wrist: (wrist * 10.0).round() / 10.0,
         }
     }
@@ -173,14 +169,13 @@ impl Controller {
     fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<(), Box<dyn Error>> {
         let angles = self.calculate_joint_angles(target_elevation);
 
-        self.set_position(Servo::WristTilt, angles.wrist, true, 200)?;
-        self.set_position(Servo::ElbowTilt, angles.elbow, true, 200)?;
-        self.set_position(Servo::ShoulderTilt, angles.shoulder, true, 200)?;
-        self.set_position(Servo::BaseSpin, target_azimuth, true, 200)?;
+        self.set_position(Servo::WristTilt, angles.wrist)?;
+        self.set_position(Servo::ElbowTilt, angles.elbow)?;
+        self.set_position(Servo::ShoulderTilt, angles.shoulder)?;
+        self.set_position(Servo::BaseSpin, target_azimuth)?;
 
         Ok(())
     }
-
 }
 
 use strum::IntoEnumIterator;
@@ -220,12 +215,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    scan(&mut controller)?;
+    // scan(&mut controller)?;
+    controller.set_look(0.0, -125.0)?;
+    controller.set_look(0.0, 125.0)?;
     controller.set_look(0.0, 0.0)?;
 
     // Get positions of all servos in degrees
     for servo in Servo::iter() {
-        if let Ok(position) = controller.get_position(servo, true) {
+        if let Ok(position) = controller.get_position(servo) {
             println!("{:?} position: {:.1} degrees", servo, position);
         } else {
             println!("Failed to get position for {:?}", servo);
