@@ -95,7 +95,7 @@ impl Controller {
             return Ok(0.0);
         }
 
-        let adjusted_target = if !self.calibration_data.collecting_data {
+        let adjusted_target = if !self.calibration_data.collecting_data && !is_retry {
             if let Some(calibration) = self.calibration_data.calibrations.get(&servo_id) {
                 if movement_size > 0.0 {
                     target_position + (movement_size * calibration.positive_movement / 100.0)
