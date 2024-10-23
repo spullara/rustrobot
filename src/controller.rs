@@ -2,15 +2,12 @@
 use crate::{
     constants::*,
     types::{Servo, JointAngles, clamp_angle},
-    calibration::{ServoCalibration, CalibrationData},
 };
 use hidapi::HidApi;
 use std::error::Error;
-use strum::IntoEnumIterator;
 
 pub struct Controller {
     device: hidapi::HidDevice,
-    calibration_data: CalibrationData,
 }
 
 impl Controller {
@@ -20,7 +17,6 @@ impl Controller {
 
         Ok(Controller {
             device,
-            calibration_data: CalibrationData::new(),
         })
     }
 
@@ -60,27 +56,7 @@ impl Controller {
         (position as f32) * 250.0 / 1000.0 - 125.0
     }
 
-    pub fn start_collecting_data(&mut self) {
-        self.calibration_data.collecting_data = true;
-        for servo in Servo::iter() {
-            self.calibration_data.movement_data.insert(servo, (Vec::new(), Vec::new()));
-        }
-        println!("Started collecting calibration data");
-    }
-
-    pub fn calculate_calibration(&mut self) {
-        self.calibration_data.collecting_data = false;
-        for servo in Servo::iter() {
-            if let Some((positive_moves, negative_moves)) = self.calibration_data.movement_data.get(&servo) {
-                let calibration = ServoCalibration::calculate_from_movements(positive_moves, negative_moves);
-                self.calibration_data.calibrations.insert(servo, calibration);
-            }
-        }
-        println!("Calibration calculated from collected data:");
-        self.print_calibration_status();
-    }
-
-    fn _set_position_internal<T: Into<f32>>(&mut self, servo_id: Servo, position: T, is_retry: bool) -> Result<f32, Box<dyn Error>> {
+    fn _set_position_internal<T: Into<f32>>(&mut self, servo_id: Servo, position: T) -> Result<f32, Box<dyn Error>> {
         let angular_speed = 5.0;
         let target_position = position.into();
 
@@ -95,20 +71,6 @@ impl Controller {
             return Ok(0.0);
         }
 
-        let adjusted_target = if !self.calibration_data.collecting_data && !is_retry {
-            if let Some(calibration) = self.calibration_data.calibrations.get(&servo_id) {
-                if movement_size > 0.0 {
-                    target_position + (movement_size * calibration.positive_movement / 100.0)
-                } else {
-                    target_position + (movement_size * calibration.negative_movement / 100.0)
-                }
-            } else {
-                target_position
-            }
-        } else {
-            target_position
-        };
-
         let duration_ms = ((movement_size.abs() * angular_speed).round() as u16).max(20);
         println!(
             "Moving servo {} from {} to {} ({}ms)",
@@ -121,7 +83,7 @@ impl Controller {
             ((duration_ms & 0xff00) >> 8) as u8,
         ];
 
-        let pos = Self::_angle_to_position(adjusted_target);
+        let pos = Self::_angle_to_position(target_position);
         data.extend_from_slice(&[
             servo_id as u8,
             (pos & 0xff) as u8,
@@ -134,17 +96,6 @@ impl Controller {
         let achieved_position = self.get_position(servo_id)?;
         let error = achieved_position - target_position;
         println!("Servo {} is off by {}", servo_id as u8, error);
-
-        // Only collect data if in calibration mode and this is not a retry
-        if self.calibration_data.collecting_data && !is_retry {
-            if let Some((positive_moves, negative_moves)) = self.calibration_data.movement_data.get_mut(&servo_id) {
-                if movement_size > 0.0 {
-                    positive_moves.push((movement_size, error));
-                } else {
-                    negative_moves.push((movement_size.abs(), error));
-                }
-            }
-        }
 
         Ok(error)
     }
@@ -198,24 +149,13 @@ impl Controller {
     }
 
     fn set_position(&mut self, servo_id: Servo, position: f32) -> Result<u32, Box<dyn Error>> {
-        let error = self._set_position_internal(servo_id, position, false)?;
+        let error = self._set_position_internal(servo_id, position)?;
         if error.abs() > 1.0 {
             println!("Retrying servo {} move", servo_id as u8);
-            self._set_position_internal(servo_id, position, true)?;
+            self._set_position_internal(servo_id, position)?;
             Ok(1)
         } else {
             Ok(0)
-        }
-    }
-
-    pub fn print_calibration_status(&self) {
-        println!("\nServo Calibration Status:");
-        for servo in Servo::iter() {
-            if let Some(cal) = self.calibration_data.calibrations.get(&servo) {
-                println!("{:?}:", servo);
-                println!("  Positive movements: {:.2}% adjustment", cal.positive_movement);
-                println!("  Negative movements: {:.2}% adjustment", cal.negative_movement);
-            }
         }
     }
 }
