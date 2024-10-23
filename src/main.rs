@@ -69,7 +69,7 @@ impl Controller {
     /// If degrees=true, position should be between -125.0 and 125.0 degrees
     /// If degrees=false, position should be between 0 and 1000
     fn set_position<T: Into<f32>>(&mut self, servo_id: Servo, position: T) -> Result<(), Box<dyn Error>> {
-        let angular_speed = 250.0 / 200.0; // ms per degree
+        let angular_speed = 5.0; // ms per degree
         let position = position.into();
         if !(-125.0..=125.0).contains(&position) {
             return Err("Angle must be between -125.0 and 125.0 degrees".into());
@@ -77,7 +77,11 @@ impl Controller {
 
         // get current position
         let current_angle = self.get_position(servo_id)?;
-        let duration_ms = ((position - current_angle).abs() * angular_speed).round() as u16;
+        let delta = position - current_angle;
+        if (delta.abs() < 1.0) {
+            return Ok(());
+        }
+        let duration_ms = ((delta.abs() * angular_speed).round() as u16).max(20);
         println!("Moving servo {} from {} to {} ({}ms)", servo_id as u8, current_angle, position, duration_ms);
 
         let mut data = vec![
@@ -98,6 +102,14 @@ impl Controller {
 
         // Wait till it completes
         std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
+        // Print how close it is to the target position
+        println!("Servo {} is of by {}", servo_id as u8, self.get_position(servo_id)? - position);
+
+        // Check to see how close it is and try again if > 1 degree
+        if (self.get_position(servo_id)? - position).abs() > 1.0 {
+            println!("Retrying servo {} move", servo_id as u8);
+            self.set_position(servo_id, position)?;
+        }
 
         Ok(())
     }
@@ -206,6 +218,7 @@ fn scan(controller: &mut Controller) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+
 // Example usage in main
 fn main() -> Result<(), Box<dyn Error>> {
     let mut controller = Controller::new()?;
@@ -215,7 +228,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    // scan(&mut controller)?;
+    scan(&mut controller)?;
     controller.set_look(0.0, -125.0)?;
     controller.set_look(0.0, 125.0)?;
     controller.set_look(0.0, 0.0)?;
