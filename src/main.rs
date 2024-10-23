@@ -185,16 +185,30 @@ impl Controller {
 
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use crate::Servo::{ClawGrip, ClawTwist};
 
 #[derive(Debug, EnumIter, Clone, Copy)]
 enum Servo {
-    ClawGrip = 1, // -125 to 31.8, open to closed
-    ClawTwist = 2, // -125 to 125, counterclockwise
     WristTilt = 3, // -125 to 125 up to down
     ElbowTilt = 4, // -125 to 125 up to down
     ShoulderTilt = 5, // -125 to 125 up to down
     BaseSpin = 6, // -125 to 125 clockwise
+}
+
+fn scan(controller: &mut Controller) -> Result<(), Box<dyn Error>> {
+    // Move between 90 and -60 and back to 0
+    for i in 0..=15 {
+        controller.set_look(90.0 - i as f32 * 10.0, 0.0)?;
+    }
+    for i in 1..=6 {
+        controller.set_look(-60.0 + i as f32 * 10.0, 0.0)?;
+    }
+
+    for i in 0..=25 {
+        controller.set_look(0.0, -125.0 + i as f32 * 10.0)?;
+    }
+
+    controller.set_look(0.0, 0.0)?;
+    Ok(())
 }
 
 // Example usage in main
@@ -206,17 +220,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    // Reset to standard position
-    controller.set_position(ClawTwist, 0.0, true, 500)?;
-    controller.set_position(ClawGrip, 0.0, true, 500)?;
-
-    // Move between 90 and -60 and back to 0
-    for i in 0..=15 {
-        controller.set_look(90.0 - i as f32 * 10.0, 0.0)?;
-    }
-    for i in 0..=6 {
-        controller.set_look(-60.0 + i as f32 * 10.0, 0.0)?;
-    }
+    scan(&mut controller)?;
+    controller.set_look(0.0, 0.0)?;
 
     // Get positions of all servos in degrees
     for servo in Servo::iter() {
@@ -226,8 +231,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Failed to get position for {:?}", servo);
         }
     }
-
-    controller.set_look(0.0, 0.0)?;
 
     Ok(())
 }
