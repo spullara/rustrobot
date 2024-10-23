@@ -13,6 +13,12 @@ struct Controller {
     device: hidapi::HidDevice,
 }
 
+struct JointAngles {
+    pub shoulder: f32,
+    pub elbow: f32,
+    pub wrist: f32,
+}
+
 impl Controller {
     fn new() -> Result<Self, Box<dyn Error>> {
         let api = HidApi::new()?;
@@ -89,6 +95,10 @@ impl Controller {
         ]);
 
         self._send(CMD_SERVO_MOVE, &data)?;
+
+        // Wait till it completes
+        std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
+
         Ok(())
     }
 
@@ -122,11 +132,60 @@ impl Controller {
         self._send(CMD_SERVO_STOP, &data)?;
         Ok(())
     }
+
+    fn calculate_joint_angles(&self, target_elevation: f32) -> JointAngles {
+        const MIN_ANGLE: f32 = -125.0;
+        const MAX_ANGLE: f32 = 125.0;
+
+        // Helper function to clamp angles within constraints
+        fn clamp_angle(angle: f32) -> f32 {
+            angle.max(MIN_ANGLE).min(MAX_ANGLE)
+        }
+
+        const MIN_ELEVATION: f32 = -60.0;
+        const MAX_ELEVATION: f32 = 90.0;
+
+        // Clamp the target_elevation
+        let target_elevation = target_elevation.max(MIN_ELEVATION).min(MAX_ELEVATION);
+
+        // For the claw to point at target elevation,
+        // the sum of all angles should be (90 - elevation)
+        let target_total_angle = 90.0 - target_elevation;
+
+        // Start with shoulder at 40% of the target total (negative because CCW)
+        let shoulder = clamp_angle(-target_total_angle * 0.4);
+
+        // Use elbow to bring us 80% of the way there
+        let elbow = clamp_angle(target_total_angle * 0.8);
+
+        // Wrist makes the final adjustment to achieve the target angle
+        // Total angle needs to be target_total_angle
+        // So wrist = target_total_angle - shoulder - elbow
+        let wrist = clamp_angle(target_total_angle - shoulder - elbow);
+
+        JointAngles {
+            shoulder: (shoulder * 10.0).round() / 10.0,  // Round to 1 decimal place
+            elbow: - (elbow * 10.0).round() / 10.0,
+            wrist: (wrist * 10.0).round() / 10.0,
+        }
+    }
+
+    fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<(), Box<dyn Error>> {
+        let angles = self.calculate_joint_angles(target_elevation);
+
+        self.set_position(Servo::WristTilt, angles.wrist, true, 200)?;
+        self.set_position(Servo::ElbowTilt, angles.elbow, true, 200)?;
+        self.set_position(Servo::ShoulderTilt, angles.shoulder, true, 200)?;
+        self.set_position(Servo::BaseSpin, target_azimuth, true, 200)?;
+
+        Ok(())
+    }
+
 }
 
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use crate::Servo::ClawTwist;
+use crate::Servo::{ClawGrip, ClawTwist};
 
 #[derive(Debug, EnumIter, Clone, Copy)]
 enum Servo {
@@ -147,12 +206,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    // Set all servos to 0 degrees
-    for servo in Servo::iter() {
-        controller.set_position(servo, 30.0, true, 500)?;
-        // Wait for servos to move
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        println!("Setting {:?} degrees", servo);
+    // Reset to standard position
+    controller.set_position(ClawTwist, 0.0, true, 500)?;
+    controller.set_position(ClawGrip, 0.0, true, 500)?;
+
+    // Move between 90 and -60 and back to 0
+    for i in 0..=15 {
+        controller.set_look(90.0 - i as f32 * 10.0, 0.0)?;
+    }
+    for i in 0..=6 {
+        controller.set_look(-60.0 + i as f32 * 10.0, 0.0)?;
     }
 
     // Get positions of all servos in degrees
@@ -164,12 +227,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    controller.set_position(ClawTwist, 0.0, true, 500)?;
-    // Wait for servos to move
-    std::thread::sleep(std::time::Duration::from_secs(1));
-
-    // Turn off all servos
-    controller.servo_off(None)?;
+    controller.set_look(0.0, 0.0)?;
 
     Ok(())
 }
