@@ -7,3 +7,11 @@ edition = "2021"
 hidapi = "2.6.3"
 strum = "0.26.3"
 strum_macros = "0.26.4"
+
+[[bin]]
+name = "robot_controller"
+path = "src/main.rs"
+
+[lib]
+name = "robot_controller"
+path = "src/lib.rs"
