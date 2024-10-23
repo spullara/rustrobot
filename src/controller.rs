@@ -149,18 +149,6 @@ impl Controller {
         Ok(error)
     }
 
-    pub fn set_position<T: Into<f32>>(&mut self, servo_id: Servo, position: T) -> Result<(), Box<dyn Error>> {
-        let target = position.into();
-        let error = self._set_position_internal(servo_id, target, false)?;
-
-        if error.abs() > 1.0 {
-            println!("Retrying servo {} move", servo_id as u8);
-            self._set_position_internal(servo_id, target, true)?;
-        }
-
-        Ok(())
-    }
-
     pub fn get_position(&mut self, servo_id: Servo) -> Result<f32, Box<dyn Error>> {
         let data = [1u8, servo_id as u8];
         self._send(CMD_GET_SERVO_POSITION, &data)?;
@@ -197,13 +185,27 @@ impl Controller {
         }
     }
 
-    pub fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<(), Box<dyn Error>> {
+    pub fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<u32, Box<dyn Error>> {
         let angles = self.calculate_joint_angles(target_elevation);
-        self.set_position(Servo::WristTilt, angles.wrist)?;
-        self.set_position(Servo::ElbowTilt, angles.elbow)?;
-        self.set_position(Servo::ShoulderTilt, angles.shoulder)?;
-        self.set_position(Servo::BaseSpin, target_azimuth)?;
-        Ok(())
+        let mut retry_count = 0;
+
+        retry_count += self.set_position(Servo::WristTilt, angles.wrist)?;
+        retry_count += self.set_position(Servo::ElbowTilt, angles.elbow)?;
+        retry_count += self.set_position(Servo::ShoulderTilt, angles.shoulder)?;
+        retry_count += self.set_position(Servo::BaseSpin, target_azimuth)?;
+
+        Ok(retry_count)
+    }
+
+    fn set_position(&mut self, servo_id: Servo, position: f32) -> Result<u32, Box<dyn Error>> {
+        let error = self._set_position_internal(servo_id, position, false)?;
+        if error.abs() > 1.0 {
+            println!("Retrying servo {} move", servo_id as u8);
+            self._set_position_internal(servo_id, position, true)?;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
     }
 
     pub fn print_calibration_status(&self) {

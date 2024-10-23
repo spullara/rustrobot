@@ -1,5 +1,4 @@
 use strum_macros::EnumIter;
-use strum::IntoEnumIterator;
 
 #[derive(Debug, EnumIter, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Servo {
