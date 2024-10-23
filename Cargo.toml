@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 hidapi = "2.6.3"
+strum = "0.26.3"
+strum_macros = "0.26.4"
