@@ -9,7 +9,7 @@ This project provides a Rust-based controller for the XArm robotic arm, allowing
 - Calculate joint angles for target elevations
 - Perform scanning movements
 - Read battery voltage
-- Interactive visualization (separate component)
+- [Interactive visualization](https://claude.site/artifacts/4e26de69-b6ae-40b5-85c5-cbe835629ca2)
 
 ## Requirements
 
@@ -44,7 +44,6 @@ This will perform a series of movements and display the current positions of all
 
 - `src/main.rs`: Main controller logic and servo control functions
 - `Cargo.toml`: Project dependencies and metadata
-- `robot-arm-interactive.tsx`: React component for interactive arm visualization (separate from main Rust project)
 
 ## Dependencies
 
