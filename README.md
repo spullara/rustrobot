@@ -21,16 +21,16 @@ RustRobot is a Rust-based controller for the XArm robotic arm, providing precise
 
 1. Clone this repository:
 
-```bash
-git clone https://github.com/spullara/rustrobot.git
-cd rustrobot
-```
+    ```bash
+    git clone https://github.com/spullara/rustrobot.git
+    cd rustrobot
+    ```
 
 2. Build the project:
 
-```bash
-cargo build --release
-```
+    ```bash
+    cargo build --release
+    ```
 
 ## Usage
 
