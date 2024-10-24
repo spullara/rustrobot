@@ -1,20 +1,21 @@
-# XArm Servo Controller
+# RustRobot: XArm Servo Controller
 
-This project provides a Rust-based controller for the XArm robotic arm, allowing precise control of servo motors and various arm movements.
+RustRobot is a Rust-based controller for the XArm robotic arm, providing precise control of servo motors and various arm movements. This project has evolved significantly, incorporating new features and improvements.
 
 ## Features
 
-- Control individual servo motors
-- Get and set servo positions
-- Calculate joint angles for target elevations
-- Perform scanning movements
-- Read battery voltage
+- Advanced servo motor control
+- Precise joint angle calculations
+- Customizable scanning movements
+- Real-time battery voltage monitoring
+- Bluetooth Low Energy (BLE) connectivity
 - [Interactive visualization](https://claude.site/artifacts/4e26de69-b6ae-40b5-85c5-cbe835629ca2)
 
 ## Requirements
 
 - Rust (edition 2021)
 - HID-compatible XArm device
+- Bluetooth Low Energy capable hardware (for BLE features)
 
 ## Installation
 
@@ -22,7 +23,7 @@ This project provides a Rust-based controller for the XArm robotic arm, allowing
 
 ```bash
 git clone https://github.com/spullara/rustrobot.git
-cd xarm-servo-controller
+cd rustrobot
 ```
 
 2. Build the project:
@@ -38,27 +39,38 @@ Run the main program:
 ```bash
 cargo run --release
 ```
-This will perform a series of movements and display the current positions of all servos.
+
+This will initialize the XArm controller and execute a series of predefined movements.
+
+## Configuration
+
+The `xarm_config.json` file allows you to customize various parameters of the XArm controller. Modify this file to adjust servo limits, movement speeds, and other settings.
 
 ## Project Structure
 
-- `src/main.rs`: Main controller logic and servo control functions
+- `src/main.rs`: Entry point and main control logic
+- `src/controller.rs`: XArm controller implementation
+- `src/transport.rs`: Communication layer for HID and BLE
+- `src/constants.rs`: Constant values and configurations
+- `src/types.rs`: Custom type definitions
+- `src/lib.rs`: Library interface for external use
 - `Cargo.toml`: Project dependencies and metadata
 
-## Dependencies
+## Key Dependencies
 
+- `btleplug`: For Bluetooth Low Energy functionality
 - `hidapi`: For communicating with the HID device
-- `strum` and `strum_macros`: For enum iteration
-
-## License
-
-[Insert your chosen license here]
+- `serde`: For JSON serialization/deserialization
+- `tokio`: For asynchronous programming
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## License
+
+MIT License
+
 ## Acknowledgements
 
-This project uses the HID protocol to communicate with the XArm device and is inspired by similar projects in other languages.
-
+This project builds upon the work of the open-source community and various libraries that make robotic control possible in Rust.
