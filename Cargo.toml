@@ -11,6 +11,7 @@ tokio = { version = "1.41.0", features = ["full"] }
 futures = "0.3.28"
 btleplug = "0.11.6"
 uuid = "1.11.0"
+parking_lot = "0.12.3"
 
 [[bin]]
 name = "robot_controller"

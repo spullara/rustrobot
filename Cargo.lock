@@ -1044,6 +1044,7 @@ dependencies = [
  "btleplug",
  "futures",
  "hidapi",
+ "parking_lot",
  "strum",
  "strum_macros",
  "tokio",

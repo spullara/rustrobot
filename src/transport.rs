@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use tokio::time::Duration;
 use hidapi::HidApi;
+use parking_lot::Mutex;  // Add this dependency to Cargo.toml
 use btleplug::api::{Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType};
 use btleplug::platform::{Manager, Peripheral};
 use futures::stream::StreamExt;
@@ -23,6 +24,7 @@ pub enum TransportError {
     NoDeviceFound,
 }
 
+
 impl fmt::Display for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -38,9 +40,8 @@ impl fmt::Display for TransportError {
 
 impl Error for TransportError {}
 
-// Use Arc to make HidDevice safely shareable between threads
 pub enum Transport {
-    Hid(Arc<hidapi::HidDevice>),
+    Hid(Arc<Mutex<hidapi::HidDevice>>),  // Wrap HidDevice in a Mutex
     Bluetooth {
         device: Peripheral,
         characteristic: Characteristic,
@@ -49,29 +50,26 @@ pub enum Transport {
 
 impl Transport {
     pub async fn new() -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Try HID first
         match Self::try_hid().await {
             Ok(hid_device) => {
                 println!("Connected via USB HID");
-                return Ok(Transport::Hid(Arc::new(hid_device)));
+                Ok(Transport::Hid(Arc::new(Mutex::new(hid_device))))  // Wrap in Mutex
             }
             Err(e) => {
                 println!("Failed to connect via USB HID: {}. Trying Bluetooth...", e);
-            }
-        }
-
-        // Fall back to Bluetooth
-        match Self::try_bluetooth().await {
-            Ok((device, characteristic)) => {
-                println!("Connected via Bluetooth");
-                Ok(Transport::Bluetooth {
-                    device,
-                    characteristic,
-                })
-            }
-            Err(e) => {
-                println!("Failed to connect via Bluetooth: {}", e);
-                Err(Box::new(TransportError::NoDeviceFound))
+                match Self::try_bluetooth().await {
+                    Ok((device, characteristic)) => {
+                        println!("Connected via Bluetooth");
+                        Ok(Transport::Bluetooth {
+                            device,
+                            characteristic,
+                        })
+                    }
+                    Err(e) => {
+                        println!("Failed to connect via Bluetooth: {}", e);
+                        Err(Box::new(TransportError::NoDeviceFound))
+                    }
+                }
             }
         }
     }
@@ -137,7 +135,7 @@ impl Transport {
                 report_data.extend_from_slice(data);
 
                 tokio::task::spawn_blocking(move || {
-                    device.write(&report_data)
+                    device.lock().write(&report_data)  // Use lock() to access the device
                 }).await??;
 
                 Ok(())
@@ -157,7 +155,7 @@ impl Transport {
                 let device = Arc::clone(device);
                 let buf = tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, usize), Box<dyn Error + Send + Sync>> {
                     let mut buf = [0u8; 64];
-                    let res = device.read_timeout(&mut buf, 1000)?;
+                    let res = device.lock().read_timeout(&mut buf, 1000)?;  // Use lock() to access the device
                     Ok((buf.to_vec(), res))
                 }).await??;
 

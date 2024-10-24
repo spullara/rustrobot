@@ -12,13 +12,13 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub async fn new() -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(Controller {
             transport: Transport::new().await?,
         })
     }
 
-    pub async fn get_battery_voltage(&mut self) -> Result<f32, Box<dyn Error>> {
+    pub async fn get_battery_voltage(&mut self) -> Result<f32, Box<dyn Error + Send + Sync>> {
         self.transport.send(CMD_GET_BATTERY_VOLTAGE, &[]).await?;
         let data = self.transport.recv(CMD_GET_BATTERY_VOLTAGE).await?;
 
