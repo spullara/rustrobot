@@ -6,6 +6,8 @@ use crate::{
 use std::collections::HashMap;
 use std::error::Error;
 use tokio::time::Duration;
+use std::pin::Pin;
+use std::future::Future;
 
 pub struct Controller {
     transport: Transport,
@@ -39,7 +41,7 @@ impl Controller {
         (position as f32) * 250.0 / 1000.0 - 125.0
     }
 
-    pub async fn get_positions(&mut self, servos: &[Servo]) -> Result<HashMap<Servo, f32>, Box<dyn Error>> {
+    pub async fn get_positions(&mut self, servos: &[Servo]) -> Result<HashMap<Servo, f32>, Box<dyn Error + Send + Sync>> {
         if servos.is_empty() {
             return Ok(HashMap::new());
         }
@@ -71,7 +73,7 @@ impl Controller {
         Ok(positions)
     }
 
-    pub async fn servo_off(&mut self, servo_id: Option<u8>) -> Result<(), Box<dyn Error>> {
+    pub async fn servo_off(&mut self, servo_id: Option<u8>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let data = match servo_id {
             Some(id) => vec![1u8, id],
             None => vec![6u8, 1, 2, 3, 4, 5, 6],
@@ -94,7 +96,88 @@ impl Controller {
         }
     }
 
-    pub async fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<u32, Box<dyn Error>> {
+    pub fn set_multiple_positions<'a>(&'a mut self, movements: &'a [(Servo, f32)])
+                                      -> Pin<Box<dyn Future<Output = Result<u32, Box<dyn Error + Send + Sync>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let angular_speed = 5.0; // degrees per millisecond
+            let mut max_duration_ms = 20u16; // Minimum duration
+
+            // Get current positions for all servos at once
+            let servos: Vec<Servo> = movements.iter().map(|(servo, _)| *servo).collect();
+            let current_positions = self.get_positions(&servos).await?;
+
+            // Calculate max duration based on the largest movement
+            for &(servo, target_angle) in movements {
+                if let Some(&current_angle) = current_positions.get(&servo) {
+                    let movement_size = (target_angle - current_angle).abs();
+
+                    if movement_size >= 1.0 {
+                        let duration = ((movement_size * angular_speed).round() as u16).max(20);
+                        max_duration_ms = max_duration_ms.max(duration);
+                    }
+                }
+            }
+
+            // Prepare movement command
+            let mut data = vec![
+                movements.len() as u8,
+                (max_duration_ms & 0xff) as u8,
+                ((max_duration_ms & 0xff00) >> 8) as u8,
+            ];
+
+            // Add each servo movement to the command
+            for &(servo, target_angle) in movements {
+                if !(-125.0..=125.0).contains(&target_angle) {
+                    return Err(format!("Angle {} must be between -125.0 and 125.0 degrees", target_angle).into());
+                }
+
+                let position = Self::_angle_to_position(target_angle);
+                data.extend_from_slice(&[
+                    servo as u8,
+                    (position & 0xff) as u8,
+                    ((position & 0xff00) >> 8) as u8,
+                ]);
+            }
+
+            // Send command for all servos
+            self.transport.send(CMD_SERVO_MOVE, &data).await?;
+            println!("Waiting for {}ms", max_duration_ms);
+            tokio::time::sleep(Duration::from_millis(max_duration_ms as u64)).await;
+
+            // Check final positions
+            let final_positions = self.get_positions(&servos).await?;
+            let mut retry_movements = Vec::new();
+
+            for &(servo, target_angle) in movements {
+                if let Some(&achieved_position) = final_positions.get(&servo) {
+                    let error = achieved_position - target_angle;
+                    println!("Servo {} is off by {}", servo as u8, error);
+
+                    if error.abs() > 1.0 {
+                        if let Some(&current_position) = current_positions.get(&servo) {
+                            if current_position != achieved_position {
+                                println!("Adding servo {} to retry list", servo as u8);
+                                retry_movements.push((servo, target_angle));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Recursively retry failed movements
+            if !retry_movements.is_empty() {
+                println!("Retrying movement for {} servos", retry_movements.len());
+                let retry_count = self.set_multiple_positions(&retry_movements).await?;
+                Ok(retry_count + 1)
+            } else {
+                Ok(0)
+            }
+        })
+    }
+
+    // You'll need to update set_look to handle the changed signature
+    pub async fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<u32, Box<dyn Error + Send + Sync>> {
         let angles = self.calculate_joint_angles(target_elevation);
 
         let movements = vec![
@@ -105,81 +188,5 @@ impl Controller {
         ];
 
         self.set_multiple_positions(&movements).await
-    }
-
-    pub async fn set_multiple_positions(&mut self, movements: &[(Servo, f32)]) -> Result<u32, Box<dyn Error>> {
-        let angular_speed = 5.0; // degrees per millisecond
-        let mut max_duration_ms = 20u16; // Minimum duration
-
-        // Get current positions for all servos at once
-        let servos: Vec<Servo> = movements.iter().map(|(servo, _)| *servo).collect();
-        let current_positions = self.get_positions(&servos).await?;
-
-        // Calculate max duration based on the largest movement
-        for &(servo, target_angle) in movements {
-            if let Some(&current_angle) = current_positions.get(&servo) {
-                let movement_size = (target_angle - current_angle).abs();
-
-                if movement_size >= 1.0 {
-                    let duration = ((movement_size * angular_speed).round() as u16).max(20);
-                    max_duration_ms = max_duration_ms.max(duration);
-                }
-            }
-        }
-
-        // Prepare movement command
-        let mut data = vec![
-            movements.len() as u8,
-            (max_duration_ms & 0xff) as u8,
-            ((max_duration_ms & 0xff00) >> 8) as u8,
-        ];
-
-        // Add each servo movement to the command
-        for &(servo, target_angle) in movements {
-            if !(-125.0..=125.0).contains(&target_angle) {
-                return Err(format!("Angle {} must be between -125.0 and 125.0 degrees", target_angle).into());
-            }
-
-            let position = Self::_angle_to_position(target_angle);
-            data.extend_from_slice(&[
-                servo as u8,
-                (position & 0xff) as u8,
-                ((position & 0xff00) >> 8) as u8,
-            ]);
-        }
-
-        // Send command for all servos
-        self.transport.send(CMD_SERVO_MOVE, &data).await?;
-        println!("Waiting for {}ms", max_duration_ms);
-        tokio::time::sleep(Duration::from_millis(max_duration_ms as u64)).await;
-
-        // Check final positions
-        let final_positions = self.get_positions(&servos).await?;
-        let mut retry_movements = Vec::new();
-
-        for &(servo, target_angle) in movements {
-            if let Some(&achieved_position) = final_positions.get(&servo) {
-                let error = achieved_position - target_angle;
-                println!("Servo {} is off by {}", servo as u8, error);
-
-                if error.abs() > 1.0 {
-                    if let Some(&current_position) = current_positions.get(&servo) {
-                        if current_position != achieved_position {
-                            println!("Adding servo {} to retry list", servo as u8);
-                            retry_movements.push((servo, target_angle));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Recursively retry failed movements
-        if !retry_movements.is_empty() {
-            println!("Retrying movement for {} servos", retry_movements.len());
-            let retry_count = self.set_multiple_positions(&retry_movements).await?;
-            Ok(retry_count + 1)
-        } else {
-            Ok(0)
-        }
     }
 }

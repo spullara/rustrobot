@@ -149,7 +149,7 @@ impl Transport {
         }
     }
 
-    pub async fn recv(&mut self, cmd: u8) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    pub async fn recv(&mut self, _cmd: u8) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
         match self {
             Transport::Hid(device) => {
                 let device = Arc::clone(device);

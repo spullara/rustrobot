@@ -2,7 +2,7 @@ use robot_controller::{Controller, Servo};
 use std::error::Error;
 use std::f32::consts::PI;
 
-async fn scan_circle(controller: &mut Controller) -> Result<u32, Box<dyn Error>> {
+async fn scan_circle(controller: &mut Controller) -> Result<u32, Box<dyn Error + Send + Sync>> {
     let mut total_retries = 0;
 
     // Center point
@@ -40,7 +40,7 @@ async fn scan_circle(controller: &mut Controller) -> Result<u32, Box<dyn Error>>
     Ok(total_retries)
 }
 
-async fn scan(controller: &mut Controller) -> Result<u32, Box<dyn Error>> {
+async fn scan(controller: &mut Controller) -> Result<u32, Box<dyn Error + Send + Sync>> {
     let mut total_retries = 0;
 
     for i in 0..=15 {
@@ -59,7 +59,7 @@ async fn scan(controller: &mut Controller) -> Result<u32, Box<dyn Error>> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut controller = Controller::new().await?;
 
     if let Ok(voltage) = controller.get_battery_voltage().await {
