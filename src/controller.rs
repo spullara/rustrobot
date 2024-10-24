@@ -56,50 +56,6 @@ impl Controller {
         (position as f32) * 250.0 / 1000.0 - 125.0
     }
 
-    fn _set_position_internal<T: Into<f32>>(&mut self, servo_id: Servo, position: T) -> Result<f32, Box<dyn Error>> {
-        let angular_speed = 5.0;
-        let target_position = position.into();
-
-        if !(-125.0..=125.0).contains(&target_position) {
-            return Err("Angle must be between -125.0 and 125.0 degrees".into());
-        }
-
-        let current_angle = self.get_position(servo_id)?;
-        let movement_size = target_position - current_angle;
-
-        if movement_size.abs() < 1.0 {
-            return Ok(0.0);
-        }
-
-        let duration_ms = ((movement_size.abs() * angular_speed).round() as u16).max(20);
-        println!(
-            "Moving servo {} from {} to {} ({}ms)",
-            servo_id as u8, current_angle, target_position, duration_ms
-        );
-
-        let mut data = vec![
-            1u8,
-            (duration_ms & 0xff) as u8,
-            ((duration_ms & 0xff00) >> 8) as u8,
-        ];
-
-        let pos = Self::_angle_to_position(target_position);
-        data.extend_from_slice(&[
-            servo_id as u8,
-            (pos & 0xff) as u8,
-            ((pos & 0xff00) >> 8) as u8,
-        ]);
-
-        self._send(CMD_SERVO_MOVE, &data)?;
-        std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
-
-        let achieved_position = self.get_position(servo_id)?;
-        let error = achieved_position - target_position;
-        println!("Servo {} is off by {}", servo_id as u8, error);
-
-        Ok(error)
-    }
-
     pub fn get_position(&mut self, servo_id: Servo) -> Result<f32, Box<dyn Error>> {
         let data = [1u8, servo_id as u8];
         self._send(CMD_GET_SERVO_POSITION, &data)?;
@@ -133,17 +89,6 @@ impl Controller {
             shoulder: (shoulder * 10.0).round() / 10.0,
             elbow: -(elbow * 10.0).round() / 10.0,
             wrist: (wrist * 10.0).round() / 10.0,
-        }
-    }
-
-    fn set_position(&mut self, servo_id: Servo, position: f32) -> Result<u32, Box<dyn Error>> {
-        let error = self._set_position_internal(servo_id, position)?;
-        if error.abs() > 1.0 {
-            println!("Retrying servo {} move", servo_id as u8);
-            self._set_position_internal(servo_id, position)?;
-            Ok(1)
-        } else {
-            Ok(0)
         }
     }
 
