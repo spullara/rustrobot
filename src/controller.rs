@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // src/controller.rs
 use crate::{
     constants::*,
@@ -5,10 +6,37 @@ use crate::{
 };
 use hidapi::HidApi;
 use std::error::Error;
+use std::fmt;
 
 pub struct Controller {
     device: hidapi::HidDevice,
 }
+// Custom error type for better error messages
+#[derive(Debug)]
+pub enum ControllerError {
+    InvalidResponse {
+        expected_len: usize,
+        actual_len: usize,
+        raw_data: Vec<u8>,
+    },
+    DeviceError(String),
+    Timeout,
+}
+
+impl fmt::Display for ControllerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ControllerError::InvalidResponse { expected_len, actual_len, raw_data } => {
+                write!(f, "Invalid response data: expected length {} but got {}. Raw data: {:02x?}",
+                       expected_len, actual_len, raw_data)
+            }
+            ControllerError::DeviceError(msg) => write!(f, "Device error: {}", msg),
+            ControllerError::Timeout => write!(f, "Device timeout"),
+        }
+    }
+}
+
+impl Error for ControllerError {}
 
 impl Controller {
     pub fn new() -> Result<Self, Box<dyn Error>> {
@@ -30,14 +58,41 @@ impl Controller {
     fn _recv(&mut self, cmd: u8) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut buf = [0u8; 64];
         let res = self.device.read_timeout(&mut buf, 1000)?;
-        if res >= 4 && buf[0] == SIGNATURE && buf[1] == SIGNATURE && buf[3] == cmd {
-            let length = buf[2] as usize;
-            Ok(buf[4..4 + length].to_vec())
-        } else {
-            Err("Invalid response".into())
-        }
-    }
 
+        // Log the raw response for debugging
+        println!("Raw response: length={}, data={:02x?}", res, &buf[..res]);
+
+        if res < 4 {
+            return Err(ControllerError::InvalidResponse {
+                expected_len: 4,
+                actual_len: res,
+                raw_data: buf[..res].to_vec(),
+            }.into());
+        }
+
+        if buf[0] != SIGNATURE || buf[1] != SIGNATURE {
+            return Err(ControllerError::DeviceError(
+                format!("Invalid signature: {:02x} {:02x}", buf[0], buf[1])
+            ).into());
+        }
+
+        if buf[3] != cmd {
+            return Err(ControllerError::DeviceError(
+                format!("Command mismatch: expected {:02x}, got {:02x}", cmd, buf[3])
+            ).into());
+        }
+
+        let length = buf[2] as usize;
+        if res < 4 + length {
+            return Err(ControllerError::InvalidResponse {
+                expected_len: 4 + length,
+                actual_len: res,
+                raw_data: buf[..res].to_vec(),
+            }.into());
+        }
+
+        Ok(buf[4..4 + length].to_vec())
+    }
     pub fn get_battery_voltage(&mut self) -> Result<f32, Box<dyn Error>> {
         self._send(CMD_GET_BATTERY_VOLTAGE, &[])?;
         let data = self._recv(CMD_GET_BATTERY_VOLTAGE)?;
@@ -56,17 +111,55 @@ impl Controller {
         (position as f32) * 250.0 / 1000.0 - 125.0
     }
 
-    pub fn get_position(&mut self, servo_id: Servo) -> Result<f32, Box<dyn Error>> {
-        let data = [1u8, servo_id as u8];
+    pub fn get_positions(&mut self, servos: &[Servo]) -> Result<HashMap<Servo, f32>, Box<dyn Error>> {
+        if servos.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut data = vec![servos.len() as u8];
+        for &servo in servos {
+            data.push(servo as u8);
+        }
+
+        println!("Requesting positions for servos: {:?}", servos);
         self._send(CMD_GET_SERVO_POSITION, &data)?;
 
         let response = self._recv(CMD_GET_SERVO_POSITION)?;
-        if response.len() >= 4 {
-            let position = (response[3] as u16) * 256 + response[2] as u16;
-            Ok(Self::_position_to_angle(position))
-        } else {
-            Err("Invalid position data received".into())
+        println!("Response data: {:02x?}", response);
+
+        // Looking at the response, it starts with the count (03)
+        // Then for each servo: [servo_id, position_low, position_high]
+        let num_servos = response[0] as usize;
+        println!("Number of servos in response: {}", num_servos);
+
+        let mut positions = HashMap::with_capacity(servos.len());
+        let mut response_idx = 1; // Skip the count byte
+
+        while response_idx + 2 < response.len() {
+            let servo_id = response[response_idx];
+            let position_low = response[response_idx + 1];
+            let position_high = response[response_idx + 2];
+
+            // Convert servo_id back to Servo enum
+            if let Some(servo) = servos.iter().find(|&&s| s as u8 == servo_id) {
+                let position = (position_high as u16) * 256 + position_low as u16;
+                let angle = Self::_position_to_angle(position);
+                println!("Servo {:?} (id={}) position={} angle={:.1}",
+                         servo, servo_id, position, angle);
+                positions.insert(*servo, angle);
+            } else {
+                println!("Warning: Received position for unknown servo id: {}", servo_id);
+            }
+
+            response_idx += 3;
         }
+
+        if positions.len() != servos.len() {
+            println!("Warning: Only got positions for {}/{} servos",
+                     positions.len(), servos.len());
+        }
+
+        Ok(positions)
     }
 
     pub fn servo_off(&mut self, servo_id: Option<u8>) -> Result<(), Box<dyn Error>> {
@@ -109,19 +202,20 @@ impl Controller {
         let angular_speed = 5.0; // degrees per millisecond
         let mut max_duration_ms = 20u16; // Minimum duration
 
-        // Get current positions and calculate max duration
-        let mut current_positions = Vec::with_capacity(movements.len());
+        // Get current positions for all servos at once
+        let servos: Vec<Servo> = movements.iter().map(|(servo, _)| *servo).collect();
+        let current_positions = self.get_positions(&servos)?;
 
+        // Calculate max duration based on the largest movement
         for &(servo, target_angle) in movements {
-            let current_angle = self.get_position(servo)?;
-            let movement_size = (target_angle - current_angle).abs();
+            if let Some(&current_angle) = current_positions.get(&servo) {
+                let movement_size = (target_angle - current_angle).abs();
 
-            if movement_size >= 1.0 {
-                let duration = ((movement_size * angular_speed).round() as u16).max(20);
-                max_duration_ms = max_duration_ms.max(duration);
+                if movement_size >= 1.0 {
+                    let duration = ((movement_size * angular_speed).round() as u16).max(20);
+                    max_duration_ms = max_duration_ms.max(duration);
+                }
             }
-
-            current_positions.push((servo, current_angle));
         }
 
         // Prepare and send movement command
@@ -151,18 +245,24 @@ impl Controller {
         // Wait for movement to complete
         std::thread::sleep(std::time::Duration::from_millis(max_duration_ms as u64));
 
-        // Check positions and retry if needed
+        // Check final positions for all servos at once
+        let final_positions = self.get_positions(&servos)?;
         let mut retry_movements = Vec::new();
 
         for &(servo, target_angle) in movements {
-            let achieved_position = self.get_position(servo)?;
-            let error = achieved_position - target_angle;
+            if let Some(&achieved_position) = final_positions.get(&servo) {
+                let error = achieved_position - target_angle;
 
-            println!("Servo {} is off by {}", servo as u8, error);
+                println!("Servo {} is off by {}", servo as u8, error);
 
-            if error.abs() > 1.0 && current_positions.iter().any(|(s, a)| *s == servo && *a != achieved_position) {
-                println!("Adding servo {} to retry list", servo as u8);
-                retry_movements.push((servo, target_angle));
+                if error.abs() > 1.0 {
+                    if let Some(&current_position) = current_positions.get(&servo) {
+                        if current_position != achieved_position {
+                            println!("Adding servo {} to retry list", servo as u8);
+                            retry_movements.push((servo, target_angle));
+                        }
+                    }
+                }
             }
         }
 

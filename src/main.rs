@@ -77,12 +77,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Total retries: {}", retries);
 
-    for servo in Servo::iter() {
-        if let Ok(position) = controller.get_position(servo) {
+    if let Ok(positions) = controller.get_positions(&[Servo::WristTilt, Servo::ElbowTilt, Servo::ShoulderTilt]) {
+        for (servo, position) in positions {
             println!("{:?} position: {:.1} degrees", servo, position);
-        } else {
-            println!("Failed to get position for {:?}", servo);
         }
+    } else {
+        println!("Failed to get positions for servos");
     }
 
     Ok(())
