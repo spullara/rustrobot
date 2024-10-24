@@ -1,6 +1,7 @@
 mod constants;
 mod types;
 mod controller;
+mod transport;
 
 pub use controller::Controller;
 pub use types::{Servo, JointAngles};

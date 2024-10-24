@@ -7,6 +7,10 @@ edition = "2021"
 hidapi = "2.6.3"
 strum = "0.26.3"
 strum_macros = "0.26.4"
+tokio = { version = "1.41.0", features = ["full"] }
+futures = "0.3.28"
+btleplug = "0.11.6"
+uuid = "1.11.0"
 
 [[bin]]
 name = "robot_controller"
