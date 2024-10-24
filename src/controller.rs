@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 // src/controller.rs
 use crate::{
     constants::*,
-    types::{Servo, JointAngles, clamp_angle},
+    types::{clamp_angle, JointAngles, Servo},
 };
 use hidapi::HidApi;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -20,7 +20,6 @@ pub enum ControllerError {
         raw_data: Vec<u8>,
     },
     DeviceError(String),
-    Timeout,
 }
 
 impl fmt::Display for ControllerError {
@@ -31,7 +30,6 @@ impl fmt::Display for ControllerError {
                        expected_len, actual_len, raw_data)
             }
             ControllerError::DeviceError(msg) => write!(f, "Device error: {}", msg),
-            ControllerError::Timeout => write!(f, "Device timeout"),
         }
     }
 }
@@ -58,9 +56,6 @@ impl Controller {
     fn _recv(&mut self, cmd: u8) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut buf = [0u8; 64];
         let res = self.device.read_timeout(&mut buf, 1000)?;
-
-        // Log the raw response for debugging
-        println!("Raw response: length={}, data={:02x?}", res, &buf[..res]);
 
         if res < 4 {
             return Err(ControllerError::InvalidResponse {
@@ -121,16 +116,9 @@ impl Controller {
             data.push(servo as u8);
         }
 
-        println!("Requesting positions for servos: {:?}", servos);
         self._send(CMD_GET_SERVO_POSITION, &data)?;
 
         let response = self._recv(CMD_GET_SERVO_POSITION)?;
-        println!("Response data: {:02x?}", response);
-
-        // Looking at the response, it starts with the count (03)
-        // Then for each servo: [servo_id, position_low, position_high]
-        let num_servos = response[0] as usize;
-        println!("Number of servos in response: {}", num_servos);
 
         let mut positions = HashMap::with_capacity(servos.len());
         let mut response_idx = 1; // Skip the count byte
@@ -144,11 +132,7 @@ impl Controller {
             if let Some(servo) = servos.iter().find(|&&s| s as u8 == servo_id) {
                 let position = (position_high as u16) * 256 + position_low as u16;
                 let angle = Self::_position_to_angle(position);
-                println!("Servo {:?} (id={}) position={} angle={:.1}",
-                         servo, servo_id, position, angle);
                 positions.insert(*servo, angle);
-            } else {
-                println!("Warning: Received position for unknown servo id: {}", servo_id);
             }
 
             response_idx += 3;

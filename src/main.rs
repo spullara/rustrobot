@@ -1,6 +1,5 @@
 use robot_controller::{Controller, Servo};
 use std::error::Error;
-use strum::IntoEnumIterator;
 use std::f32::consts::PI;
 
 fn scan_circle(controller: &mut Controller) -> Result<u32, Box<dyn Error>> {
