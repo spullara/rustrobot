@@ -82,6 +82,46 @@ impl Controller {
         Ok(())
     }
 
+    /// Closed-form posture solver for the phone-holder use case. The input is a
+    /// target elevation, meaning the direction the payload should aim, and the
+    /// output is the shoulder, elbow, and wrist tilt angles. This is not a
+    /// generic inverse-kinematics routine: base spin, or azimuth, is handled by
+    /// the caller.
+    ///
+    /// The geometry assumed here is an equal-length upper arm and forearm,
+    /// `L1 = L2 = 10 cm`. The third link, from wrist hinge to payload, is about
+    /// `6 cm` to the camera face with the current mount. That length does not
+    /// enter this joint split; it changes where the payload ends up in space,
+    /// but not how the shoulder and elbow divide the aiming angle.
+    ///
+    /// Let `t = 90 - elevation`, after clamping the elevation to
+    /// `MIN_ELEVATION..=MAX_ELEVATION`. The wrist formula,
+    /// `wrist = t - shoulder - elbow`, is the orientation closure. Each joint
+    /// angle is a tilt relative to the previous link, so the cumulative payload
+    /// tilt is `shoulder + elbow + wrist`. Forcing that sum to be `t` makes the
+    /// payload point at the requested elevation regardless of how the upper
+    /// joints split the angle.
+    ///
+    /// The `0.8` elbow coefficient is `2 × 0.4` because that 2:1 ratio is the
+    /// stability constraint. In side view, the horizontal wrist offset is
+    /// `-L1·sin(k1·t) + L2·sin((k2 - k1)·t)`, which is identically zero exactly
+    /// when `L1 == L2` and `k2 == 2·k1`. With the phone mounted at or near the
+    /// wrist, keeping the wrist over the base is the center-of-mass-over-base
+    /// condition.
+    ///
+    /// The specific `k1 = 0.4` value comes from the elbow servo limit. At
+    /// `MIN_ELEVATION = -60`, the worst-case total aim is `t_max = 150°`; the
+    /// elbow magnitude is `2·k1·t_max`. Keeping that within the `MIN_ANGLE` to
+    /// `MAX_ANGLE` servo range gives `k1 ≤ 125 / 300 = 0.4167`, so `0.4` leaves
+    /// about `5°` of elbow margin, with the elbow at `120°`. The shoulder and
+    /// wrist limits are not binding.
+    ///
+    /// These constants must be re-derived if `L1` and `L2` stop being equal. In
+    /// the small-angle case the ratio becomes `k2 = k1·(1 + L1/L2)`, and the
+    /// exact solution should be used otherwise. Changing the elbow servo limit,
+    /// `MIN_ELEVATION`, or `MAX_ELEVATION` shifts the allowed `k1` range, and
+    /// mounting the payload significantly past the wrist hinge would make
+    /// wrist-over-base a weaker approximation for center-of-mass-over-base.
     pub fn calculate_joint_angles(&self, target_elevation: f32) -> JointAngles {
         let target_elevation = target_elevation.max(MIN_ELEVATION).min(MAX_ELEVATION);
         let target_total_angle = 90.0 - target_elevation;
