@@ -1,3 +1,5 @@
+#![allow(clippy::manual_clamp)]
+
 mod constants;
 mod types;
 mod controller;

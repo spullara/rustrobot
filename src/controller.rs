@@ -9,15 +9,62 @@ use tokio::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
 
+// Milliseconds the hardware takes to traverse one degree at the base speed;
+// equivalent to 200°/s.
+const BASE_MS_PER_DEGREE: f32 = 5.0;
+
+fn validate_speed_multiplier(multiplier: f32) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if !multiplier.is_finite() {
+        return Err("Speed multiplier must be finite".into());
+    }
+
+    if multiplier <= 0.0 {
+        return Err("Speed multiplier must be greater than 0.0".into());
+    }
+
+    Ok(())
+}
+
+fn duration_ms_for_movement(movement_size_degrees: f32, speed_multiplier: f32) -> u32 {
+    let requested_duration_ms =
+        (movement_size_degrees * BASE_MS_PER_DEGREE / speed_multiplier).round();
+
+    if !requested_duration_ms.is_finite() || requested_duration_ms >= u32::MAX as f32 {
+        u32::MAX
+    } else {
+        requested_duration_ms.max(20.0) as u32
+    }
+}
+
+fn clamp_protocol_duration_ms(requested_duration_ms: u32) -> (u16, bool) {
+    if requested_duration_ms > u16::MAX as u32 {
+        (u16::MAX, true)
+    } else {
+        (requested_duration_ms as u16, false)
+    }
+}
+
 pub struct Controller {
     transport: Transport,
+    speed_multiplier: f32,
 }
 
 impl Controller {
     pub async fn new() -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(Controller {
             transport: Transport::new().await?,
+            speed_multiplier: 1.0,
         })
+    }
+
+    pub fn speed_multiplier(&self) -> f32 {
+        self.speed_multiplier
+    }
+
+    pub fn set_speed_multiplier(&mut self, multiplier: f32) -> Result<(), Box<dyn Error + Send + Sync>> {
+        validate_speed_multiplier(multiplier)?;
+        self.speed_multiplier = multiplier;
+        Ok(())
     }
 
     pub async fn get_battery_voltage(&mut self) -> Result<f32, Box<dyn Error + Send + Sync>> {
@@ -122,6 +169,7 @@ impl Controller {
     /// `MIN_ELEVATION`, or `MAX_ELEVATION` shifts the allowed `k1` range, and
     /// mounting the payload significantly past the wrist hinge would make
     /// wrist-over-base a weaker approximation for center-of-mass-over-base.
+    #[allow(clippy::manual_clamp)]
     pub fn calculate_joint_angles(&self, target_elevation: f32) -> JointAngles {
         let target_elevation = target_elevation.max(MIN_ELEVATION).min(MAX_ELEVATION);
         let target_total_angle = 90.0 - target_elevation;
@@ -136,12 +184,12 @@ impl Controller {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn set_multiple_positions<'a>(&'a mut self, movements: &'a [(Servo, f32)])
                                       -> Pin<Box<dyn Future<Output = Result<u32, Box<dyn Error + Send + Sync>>> + Send + 'a>>
     {
         Box::pin(async move {
-            let angular_speed = 5.0; // degrees per millisecond
-            let mut max_duration_ms = 20u16; // Minimum duration
+            let mut max_duration_ms = 20u32; // Protocol settling minimum duration.
 
             // Get current positions for all servos at once
             let servos: Vec<Servo> = movements.iter().map(|(servo, _)| *servo).collect();
@@ -153,17 +201,27 @@ impl Controller {
                     let movement_size = (target_angle - current_angle).abs();
 
                     if movement_size >= 1.0 {
-                        let duration = ((movement_size * angular_speed).round() as u16).max(20);
+                        let duration = duration_ms_for_movement(movement_size, self.speed_multiplier);
                         max_duration_ms = max_duration_ms.max(duration);
                     }
                 }
             }
 
+            let (protocol_duration_ms, duration_was_capped) = clamp_protocol_duration_ms(max_duration_ms);
+            if duration_was_capped {
+                eprintln!(
+                    "Requested movement duration {}ms exceeds protocol maximum; capped at {}ms",
+                    max_duration_ms,
+                    u16::MAX
+                );
+            }
+            let duration_bytes = protocol_duration_ms.to_le_bytes();
+
             // Prepare movement command
             let mut data = vec![
                 movements.len() as u8,
-                (max_duration_ms & 0xff) as u8,
-                ((max_duration_ms & 0xff00) >> 8) as u8,
+                duration_bytes[0],
+                duration_bytes[1],
             ];
 
             // Add each servo movement to the command
@@ -182,8 +240,8 @@ impl Controller {
 
             // Send command for all servos
             self.transport.send(CMD_SERVO_MOVE, &data).await?;
-            println!("Waiting for {}ms", max_duration_ms);
-            tokio::time::sleep(Duration::from_millis(max_duration_ms as u64)).await;
+            println!("Waiting for {}ms", protocol_duration_ms);
+            tokio::time::sleep(Duration::from_millis(u64::from(protocol_duration_ms))).await;
 
             // Check final positions
             let final_positions = self.get_positions(&servos).await?;
@@ -228,5 +286,33 @@ impl Controller {
         ];
 
         self.set_multiple_positions(&movements).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speed_multiplier_validation_rejects_invalid_values() {
+        assert!(validate_speed_multiplier(0.0).is_err());
+        assert!(validate_speed_multiplier(-1.0).is_err());
+        assert!(validate_speed_multiplier(f32::NAN).is_err());
+        assert!(validate_speed_multiplier(f32::INFINITY).is_err());
+    }
+
+    #[test]
+    fn duration_math_uses_multiplier_after_base_rate_before_floor() {
+        assert_eq!(duration_ms_for_movement(90.0, 1.0), 450);
+        assert_eq!(duration_ms_for_movement(90.0, 2.0), 225);
+        assert_eq!(duration_ms_for_movement(90.0, 0.5), 900);
+        assert_eq!(duration_ms_for_movement(1.0, 2.0), 20);
+    }
+
+    #[test]
+    fn protocol_duration_clamps_to_u16_max() {
+        assert_eq!(clamp_protocol_duration_ms(20), (20, false));
+        assert_eq!(clamp_protocol_duration_ms(u32::from(u16::MAX)), (u16::MAX, false));
+        assert_eq!(clamp_protocol_duration_ms(u32::from(u16::MAX) + 1), (u16::MAX, true));
     }
 }
