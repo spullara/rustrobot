@@ -66,8 +66,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         println!("Battery voltage: {:.2}V", voltage);
     }
 
-    let mut retries = scan_circle(&mut controller).await?;
+    let mut retries = 0;
 
+    controller.set_look(90.0, 0.0).await?;
+    controller.set_multiple_positions(&[(Servo::ClawGrip, -100.0)]).await?;
+    controller.set_multiple_positions(&[(Servo::ClawTwist, 0.0)]).await?;
+    controller.set_look(0.0, 0.0).await?;
+
+
+    retries += scan_circle(&mut controller).await?;
     retries += controller.set_look(-60.0, -125.0).await?;
     retries += controller.set_look(60.0, 125.0).await?;
     retries += scan(&mut controller).await?;
@@ -80,7 +87,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Ok(positions) = controller.get_positions(&[
         Servo::WristTilt,
         Servo::ElbowTilt,
-        Servo::ShoulderTilt
+        Servo::ShoulderTilt,
+        Servo::BaseSpin,
+        Servo::ClawGrip,
+        Servo::ClawTwist,
     ]).await {
         for (servo, position) in positions {
             println!("{:?} position: {:.1} degrees", servo, position);

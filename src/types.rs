@@ -2,6 +2,8 @@ use strum_macros::EnumIter;
 
 #[derive(Debug, EnumIter, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Servo {
+    ClawGrip = 1,
+    ClawTwist = 2,
     WristTilt = 3,    // -125 to 125 up to down
     ElbowTilt = 4,    // -125 to 125 up to down
     ShoulderTilt = 5, // -125 to 125 up to down
