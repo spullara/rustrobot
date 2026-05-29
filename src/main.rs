@@ -2,6 +2,61 @@ use robot_controller::{Controller, Servo};
 use std::error::Error;
 use std::f32::consts::PI;
 
+const USAGE: &str = "Usage:\nrobot_controller [OPTIONS]\n\nOPTIONS:\n    -s, --speed <MULTIPLIER>    Speed multiplier (positive finite f32, default 1.0).\n                                Values > 1.0 are faster; values < 1.0 are slower.\n    -h, --help                  Print this help message and exit.\n";
+
+#[derive(Debug, PartialEq)]
+struct Config {
+    speed: f32,
+}
+
+#[derive(Debug, PartialEq)]
+enum Args {
+    Run(Config),
+    Help,
+}
+
+/// Parses process arguments. `Args::Help` is the help sentinel used to print
+/// usage and exit before attempting to create a `Controller`.
+fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Args, String> {
+    let mut args = args.into_iter();
+    let _program = args.next();
+
+    let mut speed = 1.0;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Args::Help),
+            "--speed" | "-s" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                speed = parse_speed(&value)?;
+            }
+            _ if arg.starts_with("--speed=") => {
+                let value = &arg["--speed=".len()..];
+                speed = parse_speed(value)?;
+            }
+            _ => return Err(format!("unexpected argument '{arg}'")),
+        }
+    }
+
+    Ok(Args::Run(Config { speed }))
+}
+
+fn parse_speed(value: &str) -> Result<f32, String> {
+    let speed = value
+        .parse::<f32>()
+        .map_err(|_| format!("invalid value '{value}' for --speed: not a number"))?;
+
+    if speed.is_finite() && speed > 0.0 {
+        Ok(speed)
+    } else {
+        Err(format!(
+            "--speed must be a positive finite number, got {value}"
+        ))
+    }
+}
+
 async fn scan_circle(controller: &mut Controller) -> Result<u32, Box<dyn Error + Send + Sync>> {
     let mut total_retries = 0;
 
@@ -60,7 +115,25 @@ async fn scan(controller: &mut Controller) -> Result<u32, Box<dyn Error + Send +
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let config = match parse_args(std::env::args()) {
+        Ok(Args::Run(config)) => config,
+        Ok(Args::Help) => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            eprint!("{USAGE}");
+            std::process::exit(2);
+        }
+    };
+
     let mut controller = Controller::new().await?;
+
+    if config.speed != 1.0 {
+        controller.set_speed_multiplier(config.speed)?;
+    }
+    println!("Speed multiplier: {}", controller.speed_multiplier());
 
     if let Ok(voltage) = controller.get_battery_voltage().await {
         println!("Battery voltage: {:.2}V", voltage);
@@ -100,4 +173,90 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: Vec<&str>) -> Vec<String> {
+        values.into_iter().map(String::from).collect()
+    }
+
+    #[test]
+    fn parse_args_defaults_speed_to_one() {
+        assert_eq!(
+            parse_args(args(vec!["prog"])),
+            Ok(Args::Run(Config { speed: 1.0 }))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_long_speed_with_separate_value() {
+        assert_eq!(
+            parse_args(args(vec!["prog", "--speed", "2.0"])),
+            Ok(Args::Run(Config { speed: 2.0 }))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_long_speed_with_equals_value() {
+        assert_eq!(
+            parse_args(args(vec!["prog", "--speed=0.5"])),
+            Ok(Args::Run(Config { speed: 0.5 }))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_short_speed_with_separate_value() {
+        assert_eq!(
+            parse_args(args(vec!["prog", "-s", "3.0"])),
+            Ok(Args::Run(Config { speed: 3.0 }))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_long_help() {
+        assert_eq!(parse_args(args(vec!["prog", "--help"])), Ok(Args::Help));
+    }
+
+    #[test]
+    fn parse_args_accepts_short_help() {
+        assert_eq!(parse_args(args(vec!["prog", "-h"])), Ok(Args::Help));
+    }
+
+    #[test]
+    fn parse_args_rejects_non_numeric_speed() {
+        assert!(parse_args(args(vec!["prog", "--speed", "abc"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_zero_speed() {
+        assert!(parse_args(args(vec!["prog", "--speed", "0"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_negative_speed() {
+        assert!(parse_args(args(vec!["prog", "--speed", "-1"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_nan_speed() {
+        assert!(parse_args(args(vec!["prog", "--speed", "nan"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_unknown_flag() {
+        assert!(parse_args(args(vec!["prog", "--bogus"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_extra_positional_arg() {
+        assert!(parse_args(args(vec!["prog", "extra"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_missing_speed_value() {
+        assert!(parse_args(args(vec!["prog", "--speed"])).is_err());
+    }
 }
