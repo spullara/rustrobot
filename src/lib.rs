@@ -1,12 +1,12 @@
 #![allow(clippy::manual_clamp)]
 
 mod constants;
-mod types;
 mod controller;
 mod transport;
+mod types;
 
 pub use controller::Controller;
-pub use types::{Servo, JointAngles};
+pub use types::{JointAngles, Servo};
 
 // Re-export commonly used items
-pub use constants::{VENDOR_ID, PRODUCT_ID};
+pub use constants::{PRODUCT_ID, VENDOR_ID};

@@ -1,13 +1,13 @@
 use crate::{
     constants::*,
-    types::{clamp_angle, JointAngles, Servo},
     transport::Transport,
+    types::{clamp_angle, JointAngles, Servo},
 };
 use std::collections::HashMap;
 use std::error::Error;
-use tokio::time::Duration;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
+use tokio::time::Duration;
 
 // Milliseconds the hardware takes to traverse one degree at the base speed;
 // equivalent to 200°/s.
@@ -61,7 +61,10 @@ impl Controller {
         self.speed_multiplier
     }
 
-    pub fn set_speed_multiplier(&mut self, multiplier: f32) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub fn set_speed_multiplier(
+        &mut self,
+        multiplier: f32,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         validate_speed_multiplier(multiplier)?;
         self.speed_multiplier = multiplier;
         Ok(())
@@ -88,7 +91,10 @@ impl Controller {
         (position as f32) * 250.0 / 1000.0 - 125.0
     }
 
-    pub async fn get_positions(&mut self, servos: &[Servo]) -> Result<HashMap<Servo, f32>, Box<dyn Error + Send + Sync>> {
+    pub async fn get_positions(
+        &mut self,
+        servos: &[Servo],
+    ) -> Result<HashMap<Servo, f32>, Box<dyn Error + Send + Sync>> {
         if servos.is_empty() {
             return Ok(HashMap::new());
         }
@@ -106,7 +112,8 @@ impl Controller {
 
         while response_idx + 2 < response.len() {
             let servo_id = response[response_idx];
-            let position = response[response_idx + 1] as u16 | ((response[response_idx + 2] as u16) << 8);
+            let position =
+                response[response_idx + 1] as u16 | ((response[response_idx + 2] as u16) << 8);
 
             if let Some(servo) = servos.iter().find(|&&s| s as u8 == servo_id) {
                 let angle = Self::_position_to_angle(position);
@@ -120,7 +127,10 @@ impl Controller {
         Ok(positions)
     }
 
-    pub async fn servo_off(&mut self, servo_id: Option<u8>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn servo_off(
+        &mut self,
+        servo_id: Option<u8>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let data = match servo_id {
             Some(id) => vec![1u8, id],
             None => vec![6u8, 1, 2, 3, 4, 5, 6],
@@ -185,9 +195,10 @@ impl Controller {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn set_multiple_positions<'a>(&'a mut self, movements: &'a [(Servo, f32)])
-                                      -> Pin<Box<dyn Future<Output = Result<u32, Box<dyn Error + Send + Sync>>> + Send + 'a>>
-    {
+    pub fn set_multiple_positions<'a>(
+        &'a mut self,
+        movements: &'a [(Servo, f32)],
+    ) -> Pin<Box<dyn Future<Output = Result<u32, Box<dyn Error + Send + Sync>>> + Send + 'a>> {
         Box::pin(async move {
             let mut max_duration_ms = 20u32; // Protocol settling minimum duration.
 
@@ -201,13 +212,15 @@ impl Controller {
                     let movement_size = (target_angle - current_angle).abs();
 
                     if movement_size >= 1.0 {
-                        let duration = duration_ms_for_movement(movement_size, self.speed_multiplier);
+                        let duration =
+                            duration_ms_for_movement(movement_size, self.speed_multiplier);
                         max_duration_ms = max_duration_ms.max(duration);
                     }
                 }
             }
 
-            let (protocol_duration_ms, duration_was_capped) = clamp_protocol_duration_ms(max_duration_ms);
+            let (protocol_duration_ms, duration_was_capped) =
+                clamp_protocol_duration_ms(max_duration_ms);
             if duration_was_capped {
                 eprintln!(
                     "Requested movement duration {}ms exceeds protocol maximum; capped at {}ms",
@@ -218,16 +231,16 @@ impl Controller {
             let duration_bytes = protocol_duration_ms.to_le_bytes();
 
             // Prepare movement command
-            let mut data = vec![
-                movements.len() as u8,
-                duration_bytes[0],
-                duration_bytes[1],
-            ];
+            let mut data = vec![movements.len() as u8, duration_bytes[0], duration_bytes[1]];
 
             // Add each servo movement to the command
             for &(servo, target_angle) in movements {
                 if !(-125.0..=125.0).contains(&target_angle) {
-                    return Err(format!("Angle {} must be between -125.0 and 125.0 degrees", target_angle).into());
+                    return Err(format!(
+                        "Angle {} must be between -125.0 and 125.0 degrees",
+                        target_angle
+                    )
+                    .into());
                 }
 
                 let position = Self::_angle_to_position(target_angle);
@@ -275,7 +288,11 @@ impl Controller {
     }
 
     // You'll need to update set_look to handle the changed signature
-    pub async fn set_look(&mut self, target_elevation: f32, target_azimuth: f32) -> Result<u32, Box<dyn Error + Send + Sync>> {
+    pub async fn set_look(
+        &mut self,
+        target_elevation: f32,
+        target_azimuth: f32,
+    ) -> Result<u32, Box<dyn Error + Send + Sync>> {
         let angles = self.calculate_joint_angles(target_elevation);
 
         let movements = vec![
@@ -312,7 +329,13 @@ mod tests {
     #[test]
     fn protocol_duration_clamps_to_u16_max() {
         assert_eq!(clamp_protocol_duration_ms(20), (20, false));
-        assert_eq!(clamp_protocol_duration_ms(u32::from(u16::MAX)), (u16::MAX, false));
-        assert_eq!(clamp_protocol_duration_ms(u32::from(u16::MAX) + 1), (u16::MAX, true));
+        assert_eq!(
+            clamp_protocol_duration_ms(u32::from(u16::MAX)),
+            (u16::MAX, false)
+        );
+        assert_eq!(
+            clamp_protocol_duration_ms(u32::from(u16::MAX) + 1),
+            (u16::MAX, true)
+        );
     }
 }

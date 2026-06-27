@@ -18,6 +18,6 @@ pub struct JointAngles {
 }
 
 pub(crate) fn clamp_angle(angle: f32) -> f32 {
-    use crate::constants::{MIN_ANGLE, MAX_ANGLE};
+    use crate::constants::{MAX_ANGLE, MIN_ANGLE};
     angle.max(MIN_ANGLE).min(MAX_ANGLE)
 }
